@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
+from streamlit_searchbox import st_searchbox
 
 st.set_page_config(page_title="Rentabilidad", page_icon="📈", layout="centered")
 QS_URL = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
@@ -213,15 +214,23 @@ def fecha(ts):
 
 
 st.title("📈 Rentabilidad de acciones y ETFs")
-with st.form("buscador"):
-    col_a, col_b = st.columns([3, 1])
-    texto = col_a.text_input("Ticker", placeholder="Ej: QQQ, AAPL, NVDA, SPY", label_visibility="collapsed")
-    enviado = col_b.form_submit_button("Buscar información", use_container_width=True)
+def sugerencias(texto):
+    """Sugerencias en vivo desde Yahoo Finance mientras escribes (nombre o ticker)."""
+    texto = (texto or "").strip()
+    if not texto:
+        return []
+    return [(f"{s}  ·  {n}  ({t})", s) for s, n, t in buscar(texto)]
 
-if enviado and texto.strip():
-    st.session_state["sym"] = texto.strip().upper()
+
+elegido = st_searchbox(
+    sugerencias,
+    placeholder="Escribe un nombre o ticker: Tesla, Apple, QQQ…",
+    key="buscador",
+)
+if elegido:
+    st.session_state["sym"] = elegido
 if "sym" not in st.session_state:
-    st.info("Escribe un ticker y da clic en «Buscar información».")
+    st.info("Escribe el nombre de la empresa o su ticker y elige una opción de la lista.")
     st.stop()
 
 sym = st.session_state["sym"]
