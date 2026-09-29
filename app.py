@@ -51,13 +51,68 @@ def buscar(texto):
 @st.cache_data(ttl=900, show_spinner=False)
 def resumen(sym):
     """Módulos de quoteSummary: precio, perfil y 'Performance' (igual a la pestaña de Yahoo)."""
-    mods = "price,quoteType,fundPerformance,fundProfile,assetProfile"
+    mods = "price,quoteType,fundPerformance,fundProfile,assetProfile,summaryDetail,calendarEvents"
     try:
         data = yf.Ticker(sym)._data.get_raw_json(
             QS_URL + sym, params={"modules": mods, "formatted": "false", "corsDomain": "finance.yahoo.com"})
         return data["quoteSummary"]["result"][0]
     except Exception:
         return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def dividendos(sym):
+    try:
+        d = yf.Ticker(sym).dividends
+    except Exception:
+        return pd.Series(dtype=float)
+    if d is None or d.empty:
+        return pd.Series(dtype=float)
+    d.index = d.index.tz_localize(None)
+    return d[d > 0]
+
+
+def analizar_dividendos(sym, precio, resumen_yahoo):
+    d = dividendos(sym)
+    sd = resumen_yahoo.get("summaryDetail", {}) or {}
+    ce = resumen_yahoo.get("calendarEvents", {}) or {}
+    hoy = pd.Timestamp.today().normalize()
+
+    if d.empty:
+        return {"paga": False, "texto": "No paga dividendos"}
+
+    ultimo_fecha, ultimo_monto = d.index[-1], d.iloc[-1]
+    if ultimo_fecha < hoy - pd.DateOffset(months=18):
+        return {"paga": False,
+                "texto": f"Actualmente no paga dividendos (último pago: {ultimo_fecha:%d/%m/%Y})"}
+
+    # frecuencia: pagos promedio por año en los últimos 2 años
+    recientes = d[d.index > hoy - pd.DateOffset(years=2)]
+    por_anio = len(recientes) / 2 if ultimo_fecha > hoy - pd.DateOffset(years=2) else len(recientes)
+    if por_anio >= 10:
+        freq = "Mensual (12 pagos al año)"
+    elif por_anio >= 3:
+        freq = "Trimestral (4 pagos al año)"
+    elif por_anio >= 1.5:
+        freq = "Semestral (2 pagos al año)"
+    elif por_anio >= 0.75:
+        freq = "Anual (1 pago al año)"
+    else:
+        freq = "Irregular"
+
+    ult12 = d[d.index > hoy - pd.DateOffset(years=1)].sum()
+    rend = ult12 / precio * 100 if precio else None
+    if rend is None:
+        rend = pct(num(sd.get("trailingAnnualDividendYield")) or num(sd.get("yield")))
+
+    prox = num(ce.get("exDividendDate")) or num(sd.get("exDividendDate"))
+    prox = dt.datetime.fromtimestamp(prox) if prox else None
+    if prox and prox.date() < hoy.date():
+        prox = None
+
+    return {"paga": True, "frecuencia": freq, "ultimo_monto": ultimo_monto, "ultimo_fecha": ultimo_fecha,
+            "anual": ult12, "rendimiento": rend, "proximo_ex": prox,
+            "historial": d[d.index > hoy - pd.DateOffset(years=3)]}
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -117,6 +172,7 @@ def cargar(sym):
         "post_pct": pct(num(price.get("postMarketChangePercent"))),
         "post_hora": num(price.get("postMarketTime")),
         "moneda": price.get("currency", "USD"),
+        "_resumen": r,
     }
 
     tr, trc = fp.get("trailingReturns") or {}, fp.get("trailingReturnsCat") or {}
@@ -256,6 +312,26 @@ m1.metric("Precio de cierre", f"${info['precio']:,.2f}", delta)
 if info["post"]:
     m2.metric("Post-mercado", f"${info['post']:,.2f}",
               f"{info['post_cambio']:+.2f} ({info['post_pct']:+.2f}%)" if info["post_cambio"] is not None else None)
+
+# Dividendos
+st.markdown("### Dividendos")
+div = analizar_dividendos(sym, info["precio"], info["_resumen"])
+if not div["paga"]:
+    st.info(f"💤 {div['texto']}.")
+else:
+    st.success(f"💵 **Sí paga dividendos** · Frecuencia: **{div['frecuencia']}**")
+    d1, d2, d3 = st.columns(3)
+    d1.metric("Último pago", f"${div['ultimo_monto']:.4f}".rstrip("0").rstrip("."), div["ultimo_fecha"].strftime("%d/%m/%Y"),
+              delta_color="off")
+    d2.metric("Total últimos 12 meses", f"${div['anual']:.2f}")
+    d3.metric("Rendimiento anual", "—" if div["rendimiento"] is None else f"{div['rendimiento']:.2f}%")
+    if div["proximo_ex"]:
+        st.caption(f"Próxima fecha ex-dividendo: {div['proximo_ex']:%d/%m/%Y} "
+                   "(hay que tener la acción antes de esa fecha para recibir el pago).")
+    with st.expander("Ver pagos de los últimos 3 años"):
+        h = div["historial"].sort_index(ascending=False)
+        st.dataframe(pd.DataFrame({"Fecha": h.index.strftime("%d/%m/%Y"), "Monto por acción": [f"${v:.4f}" for v in h.values]}),
+                     hide_index=True, use_container_width=True)
 
 # Señal de desempeño histórico
 res = senal(info)
