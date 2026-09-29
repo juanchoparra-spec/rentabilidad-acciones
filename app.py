@@ -321,8 +321,7 @@ if not div["paga"]:
 else:
     st.success(f"💵 **Sí paga dividendos** · Frecuencia: **{div['frecuencia']}**")
     d1, d2, d3 = st.columns(3)
-    d1.metric("Último pago", f"${div['ultimo_monto']:.4f}".rstrip("0").rstrip("."), div["ultimo_fecha"].strftime("%d/%m/%Y"),
-              delta_color="off")
+    d1.metric(f"Último pago ({div['ultimo_fecha']:%d/%m/%Y})", f"${div['ultimo_monto']:.2f}")
     d2.metric("Total últimos 12 meses", f"${div['anual']:.2f}")
     d3.metric("Rendimiento anual", "—" if div["rendimiento"] is None else f"{div['rendimiento']:.2f}%")
     if div["proximo_ex"]:
@@ -330,7 +329,7 @@ else:
                    "(hay que tener la acción antes de esa fecha para recibir el pago).")
     with st.expander("Ver pagos de los últimos 3 años"):
         h = div["historial"].sort_index(ascending=False)
-        st.dataframe(pd.DataFrame({"Fecha": h.index.strftime("%d/%m/%Y"), "Monto por acción": [f"${v:.4f}" for v in h.values]}),
+        st.dataframe(pd.DataFrame({"Fecha": h.index.strftime("%d/%m/%Y"), "Monto por acción": [f"${v:.2f}" for v in h.values]}),
                      hide_index=True, use_container_width=True)
 
 # Señal de desempeño histórico
